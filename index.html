@@ -1,20 +1,26 @@
 <!DOCTYPE html>
 <html>
-  <head>
+
+<head>
     <title>WebSocket Playground</title>
-  </head>
-  <body></body>
-  <script>
+</head>
+
+<body></body>
+<script>
     //const ws = new WebSocket("wss://shit.solutions:9898");
     const ws = new WebSocket("ws://localhost:8080/ws");
 
-    ws.onopen = function() {
-      console.log("WebSocket Client Connectedaaa");
-      ws.send("Hello Server!.");
+    ws.onopen = function () {
+        console.log("WebSocket Client Connectedaaa");
+        ws.send({
+            "type": "create",
+            "gameID": "game123"
+        });
     };
 
-    ws.onmessage = function(e) {
-      console.log("Received: '" + e.data + "'");
+    ws.onmessage = function (e) {
+        console.log("Received: '" + e.data + "'");
     };
-  </script>
+</script>
+
 </html>
