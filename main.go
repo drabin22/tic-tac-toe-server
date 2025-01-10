@@ -73,14 +73,25 @@ func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	// Game session variables
-	var currentGame *game.Game
+	var currentSession *game.GameSession
 	var gameID string
+	var playerSymbol string
 
 	for {
 		// Read JSON message from client
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("Error reading message: %v", err)
+			if currentSession != nil && gameID != "" {
+				currentSession.RemovePlayer(conn)
+				broadcastToGame(currentSession, "Player disconnected", playerSymbol+" has left the game")
+
+				// End the game if no players remain
+				if len(currentSession.Connections) == 0 {
+					gameManager.DeleteGame(gameID)
+					log.Printf("Game %s ended due to no players remaining", gameID)
+				}
+			}
 			break
 		}
 
@@ -95,41 +106,63 @@ func WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 		case "create":
 			// Create a new game
 			gameID = msg.GameID
-			newGame, err := gameManager.CreateGame(gameID)
+			currentSession, err = gameManager.CreateGame(gameID)
 			if err != nil {
 				sendError(conn, err.Error())
 				continue
 			}
-			currentGame = newGame
-			sendResponse(conn, "Game created", gameID)
-		case "move":
-			// Make a move
-			if currentGame == nil {
-				sendError(conn, "No game joined")
-				continue
-			}
-			err := currentGame.MakeMove(msg.Row, msg.Col)
-			if err != nil {
-				sendError(conn, err.Error())
-				continue
-			}
-			// Send updated board
-			sendResponse(conn, "Board updated", currentGame.String())
-			if currentGame.Winner != "" {
-				sendResponse(conn, "Winner", currentGame.Winner)
-			}
+			playerSymbol, _ = currentSession.AssignPlayer(conn)
+			gameManager.AddConnection(gameID, conn)
+			sendResponse(conn, "Game created. You are "+playerSymbol, gameID)
 		case "join":
 			// Join an existing game
 			gameID = msg.GameID
-			currentGame, err = gameManager.GetGame(gameID)
+			currentSession, err = gameManager.GetGame(gameID)
 			if err != nil {
 				sendError(conn, err.Error())
 				continue
 			}
-			sendResponse(conn, "Game joined", gameID)
+			playerSymbol, err = currentSession.AssignPlayer(conn)
+			if err != nil {
+				sendError(conn, err.Error())
+				continue
+			}
+			gameManager.AddConnection(gameID, conn)
+			sendResponse(conn, "Game joined. You are "+playerSymbol, gameID)
+		case "move":
+			// Make a move
+			if currentSession == nil {
+				sendError(conn, "No game joined")
+				continue
+			}
+
+			// Validate that it's the player's turn
+			if playerSymbol != currentSession.Game.Turn {
+				sendError(conn, "Not your turn")
+				continue
+			}
+
+			err := currentSession.Game.MakeMove(msg.Row, msg.Col)
+			if err != nil {
+				sendError(conn, err.Error())
+				continue
+			}
+			// Broadcast updated board to all connections in the game
+			broadcastToGame(currentSession, "Board updated", currentSession.Game.String())
+			if currentSession.Game.Winner != "" {
+				broadcastToGame(currentSession, "Winner", currentSession.Game.Winner)
+			}
 		default:
 			sendError(conn, "Unknown message type")
 		}
+
+	}
+}
+
+// Helper to broadcast a message to all players in a game session
+func broadcastToGame(session *game.GameSession, messageType, payload string) {
+	for conn := range session.Connections {
+		sendResponse(conn, messageType, payload)
 	}
 }
 
